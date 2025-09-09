@@ -35,6 +35,16 @@ import {
   handleSpecialCommands, 
   enhanceResponseWithContext 
 } from '../../utils/enhancedResponseGenerator';
+import { 
+  generateEnhancedDocumentResponse,
+  processUploadedDocument,
+  getDocumentStats,
+  searchAllSources,
+  clearAllDocuments,
+  removeDocument
+} from '../../utils/enhancedDocumentResponseGenerator';
+import { contextAwareness } from '../../utils/enhancedContextAwareness';
+import { questionClassifier } from '../../utils/enhancedQuestionClassification';
 import {
   analyzeSentenceIntent,
   resolveKeywordAmbiguity,
@@ -632,6 +642,11 @@ const EnhancedAIChat = () => {
   const [isShowingTickets, setIsShowingTickets] = useState(false);
   const ticketsPerPage = 10;
   const [expandedImage, setExpandedImage] = useState(null);
+  const [processedDocuments, setProcessedDocuments] = useState([]);
+  const [documentStats, setDocumentStats] = useState(null);
+  const [isProcessingDocument, setIsProcessingDocument] = useState(false);
+  const [contextSuggestions, setContextSuggestions] = useState([]);
+  const [conversationContext, setConversationContext] = useState(null);
 
   // Initialize accessibility features when component mounts
   useEffect(() => {
@@ -649,6 +664,18 @@ const EnhancedAIChat = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages, isTyping]);
+
+  // Update context awareness when messages change
+  useEffect(() => {
+    if (messages.length > 0) {
+      const context = contextAwareness.analyzeContext(messages);
+      setConversationContext(context);
+      
+      // Generate contextual suggestions
+      const suggestions = contextAwareness.generateContextualSuggestions(context);
+      setContextSuggestions(suggestions);
+    }
+  }, [messages]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -801,14 +828,40 @@ const EnhancedAIChat = () => {
   
   const generateBotResponse = async (userInput, userMessage) => {
     setTimeout(async () => {
+      // Enhanced question classification
+      const questionClassification = questionClassifier.classify(userInput, conversationContext);
+      
+      // Legacy sentence intent analysis
       const sentenceIntent = analyzeSentenceIntent(userInput, messages);
       const normalizedInput = mapSynonymsToCanonical(userInput);
       
+      // Check for special commands first
+      const specialCommandResponse = handleSpecialCommands(userInput);
+      if (specialCommandResponse) {
+        if (specialCommandResponse.systemAction === 'clear') {
+          setMessages([messages[0]]);
+          setIsTyping(false);
+          setShowPreMadeQuestions(true);
+          return;
+        }
+        
+        const botMessage = {
+          id: Date.now(),
+          text: specialCommandResponse.text,
+          sender: 'bot',
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+        
+        setMessages(prev => [...prev, botMessage]);
+        setIsTyping(false);
+        return;
+      }
+      
+      // Check for URL resource queries
       if (isUrlResourceQuery(userInput)) {
         const urlResourceResponse = generateUrlResourceResponse(userInput);
         
         if (urlResourceResponse.confidence > 0.6) {
-          // If there's sidebar content, show it
           if (urlResourceResponse.sidebarContent) {
             setCurrentSidebarContent(urlResourceResponse.sidebarContent);
             setShowSidebarContent(true);
@@ -824,10 +877,7 @@ const EnhancedAIChat = () => {
           
           setMessages(prev => [...prev, botMessage]);
           setIsTyping(false);
-          
-          // Announce to screen readers
           announceToScreenReader("Response received with resource links", "polite");
-          
           return;
         }
       }
@@ -842,37 +892,18 @@ const EnhancedAIChat = () => {
         fulfillmentData
       };
       
-      // Analyze conversation context
-      const context = analyzeConversationContext([...messages, userMessage]);
-      
-      // Generate enhanced response
-      const response = generateEnhancedResponse(normalizedInput, [...messages, userMessage], responseData);
-      
-      // Resolve keyword ambiguity if multiple matches
-      if (response.matchedKeywords && response.matchedKeywords.length > 1) {
-        const resolvedKeyword = resolveKeywordAmbiguity(
-          normalizedInput,
-          response.matchedKeywords,
-          responseData
-        );
-        
-        // Use the resolved keyword if confidence is high enough
-        if (resolvedKeyword.confidence > 0.7) {
-          response.category = resolvedKeyword.category;
-        }
-      }
+      // Generate enhanced document-based response
+      const response = await generateEnhancedDocumentResponse(normalizedInput, [...messages, userMessage], responseData);
       
       // Check if this is a ticket-related query
       if (response.showTickets || /ticket|client name|ticket details/i.test(userInput.toLowerCase())) {
         setIsShowingTickets(true);
         setCurrentPage(1);
         
-        // Replace [TICKET_LIST] placeholder with actual ticket list
         let responseText = response.text;
         if (responseText.includes('[TICKET_LIST]')) {
           responseText = responseText.replace('[TICKET_LIST]', generateTicketResponse());
-        } else {
-          // If no placeholder but still ticket-related, append ticket list
+        } else if (!response.isDocumentBased) {
           responseText += "\n\n" + generateTicketResponse();
         }
         
@@ -886,7 +917,7 @@ const EnhancedAIChat = () => {
         ...response,
         intent: sentenceIntent.intent,
         isQuestion: sentenceIntent.isQuestion
-      }, context);
+      }, analyzeConversationContext([...messages, userMessage]));
       
       // Validate image URLs
       const validatedImageUrls = [];
@@ -894,7 +925,6 @@ const EnhancedAIChat = () => {
         try {
           const isValid = await validateImageUrl(url);
           if (isValid) {
-            // Preload image
             await preloadImage(url);
             validatedImageUrls.push(url);
           }
@@ -911,7 +941,16 @@ const EnhancedAIChat = () => {
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         imageUrls: validatedImageUrls,
         localImages: enhancedResponse.localImages || [],
-        links: enhancedResponse.links || []
+        links: enhancedResponse.links || [],
+        isDocumentBased: response.isDocumentBased || false,
+        source: response.source || null,
+        classification: {
+          intent: questionClassification.intent.name,
+          entities: questionClassification.entities,
+          urgency: questionClassification.urgency,
+          confidence: questionClassification.confidence,
+          suggestedActions: questionClassification.suggestedActions
+        }
       };
       
       setMessages(prev => [...prev, botMessage]);
@@ -930,11 +969,65 @@ const EnhancedAIChat = () => {
     }, 1000 + Math.random() * 1000);
   };
 
-  const handleFileChange = (e) => {
+  const handleFileChange = async (e) => {
     if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0];
       setFile(selectedFile);
       setImageUrl(URL.createObjectURL(selectedFile));
+      
+      // Check if it's a document that can be processed
+      const fileType = selectedFile.name.split('.').pop().toLowerCase();
+      const processableTypes = ['pdf', 'docx', 'doc', 'txt', 'xlsx', 'xls'];
+      
+      if (processableTypes.includes(fileType)) {
+        setIsProcessingDocument(true);
+        
+        try {
+          const result = await processUploadedDocument(selectedFile);
+          
+          if (result.success) {
+            // Update document stats
+            const stats = getDocumentStats();
+            setDocumentStats(stats);
+            setProcessedDocuments(stats.documents);
+            
+            // Show success message
+            const successMessage = {
+              id: Date.now(),
+              text: `✅ Document "${result.document.name}" has been successfully processed and added to my knowledge base. I can now answer questions based on its content!`,
+              sender: 'bot',
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            };
+            
+            setMessages(prev => [...prev, successMessage]);
+            
+            // Announce to screen readers
+            announceToScreenReader(`Document processed successfully: ${result.document.name}`, "polite");
+          } else {
+            // Show error message
+            const errorMessage = {
+              id: Date.now(),
+              text: `❌ Failed to process document: ${result.error}`,
+              sender: 'bot',
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            };
+            
+            setMessages(prev => [...prev, errorMessage]);
+          }
+        } catch (error) {
+          console.error('Error processing document:', error);
+          const errorMessage = {
+            id: Date.now(),
+            text: `❌ Error processing document: ${error.message}`,
+            sender: 'bot',
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          };
+          
+          setMessages(prev => [...prev, errorMessage]);
+        } finally {
+          setIsProcessingDocument(false);
+        }
+      }
       
       // Show success animation
       const filePreviewContainer = document.querySelector('.file-preview-container');
@@ -999,6 +1092,70 @@ const EnhancedAIChat = () => {
       <>
         {/* Render Markdown content with table support */}
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+  
+        {/* Document source information */}
+        {message.isDocumentBased && message.source && (
+          <div style={{
+            marginTop: '0.5rem',
+            padding: '0.5rem',
+            backgroundColor: message.sender === 'user' ? 'rgba(255,255,255,0.1)' : '#f0f9ff',
+            border: `1px solid ${message.sender === 'user' ? 'rgba(255,255,255,0.2)' : '#e0f2fe'}`,
+            borderRadius: '0.5rem',
+            fontSize: '0.875rem'
+          }}>
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '0.5rem',
+              marginBottom: '0.25rem',
+              fontWeight: '500',
+              color: message.sender === 'user' ? 'rgba(255,255,255,0.9)' : '#0369a1'
+            }}>
+              <FontAwesomeIcon icon={faPaperclip} />
+              <span>Source: {message.source.documentName}</span>
+            </div>
+            {message.source.chunks > 0 && (
+              <div style={{ 
+                fontSize: '0.75rem', 
+                color: message.sender === 'user' ? 'rgba(255,255,255,0.7)' : '#64748b' 
+              }}>
+                Found in {message.source.chunks} document section{message.source.chunks > 1 ? 's' : ''}
+                {message.source.relevanceScore && (
+                  <span> • Relevance: {Math.round(message.source.relevanceScore * 100)}%</span>
+                )}
+              </div>
+            )}
+            {message.source.keywords && message.source.keywords.length > 0 && (
+              <div style={{ 
+                fontSize: '0.75rem', 
+                color: message.sender === 'user' ? 'rgba(255,255,255,0.7)' : '#64748b',
+                marginTop: '0.25rem'
+              }}>
+                Keywords: {message.source.keywords.slice(0, 5).join(', ')}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Question classification information (for debugging/development) */}
+        {message.classification && process.env.NODE_ENV === 'development' && (
+          <div style={{
+            marginTop: '0.5rem',
+            padding: '0.5rem',
+            backgroundColor: '#f8f9fa',
+            border: '1px solid #e9ecef',
+            borderRadius: '0.25rem',
+            fontSize: '0.75rem',
+            color: '#6c757d'
+          }}>
+            <div><strong>Intent:</strong> {message.classification.intent}</div>
+            <div><strong>Urgency:</strong> {message.classification.urgency}</div>
+            <div><strong>Confidence:</strong> {Math.round(message.classification.confidence * 100)}%</div>
+            {message.classification.entities.length > 0 && (
+              <div><strong>Entities:</strong> {message.classification.entities.map(e => e.type).join(', ')}</div>
+            )}
+          </div>
+        )}
   
         {/* For local images from ticket data */}
         {message.localImages && message.localImages.length > 0 && (
@@ -1095,6 +1252,16 @@ const EnhancedAIChat = () => {
       <ChatHeader>
         <ChatTitle>Adops Process Assistant</ChatTitle>
         <HeaderActions>
+          {documentStats && documentStats.totalDocuments > 0 && (
+            <ReportButton 
+              onClick={() => setShowSidebarContent(!showSidebarContent)} 
+              aria-label="Toggle document management"
+              style={{ marginRight: '0.5rem' }}
+            >
+              <FontAwesomeIcon icon={faPaperclip} />
+              <span>Documents ({documentStats.totalDocuments})</span>
+            </ReportButton>
+          )}
           <ReportButton onClick={handleOpenReportIssue} aria-label="Report an issue">
             <FontAwesomeIcon icon={faFlag} />
             <span>Report Issue</span>
@@ -1130,6 +1297,17 @@ const EnhancedAIChat = () => {
                 </TypingIndicator>
               </MessageRow>
             )}
+            
+            {isProcessingDocument && (
+              <MessageRow $isUser={false}>
+                <AvatarContainer $isUser={false}>
+                  <FontAwesomeIcon icon={faRobot} />
+                </AvatarContainer>
+                <TypingIndicator aria-label="Processing document">
+                  <span>📄 Processing document...</span>
+                </TypingIndicator>
+              </MessageRow>
+            )}
             <div ref={messagesEndRef} />
           </MessagesContainer>
           {showPreMadeQuestions && mainChatQuestions.length > 0 && (
@@ -1141,6 +1319,36 @@ const EnhancedAIChat = () => {
                     aria-label={`Suggested question: ${question.text}`}
                   >
                     {question.text}
+                  </PreMadeQuestionButton>
+                ))}
+              </PreMadeQuestionsContainer>
+            )}
+            
+            {/* Context-aware suggestions */}
+            {contextSuggestions.length > 0 && !showPreMadeQuestions && (
+              <PreMadeQuestionsContainer>
+                <div style={{ 
+                  width: '100%', 
+                  textAlign: 'center', 
+                  marginBottom: '0.5rem',
+                  fontSize: '0.875rem',
+                  color: '#6b7280',
+                  fontWeight: '500'
+                }}>
+                  💡 Context-aware suggestions:
+                </div>
+                {contextSuggestions.map((suggestion, index) => (
+                  <PreMadeQuestionButton 
+                    key={`context-${index}`} 
+                    onClick={() => handlePreMadeQuestionClick(suggestion)}
+                    aria-label={`Context suggestion: ${suggestion}`}
+                    style={{ 
+                      backgroundColor: '#f0f9ff',
+                      borderColor: '#0ea5e9',
+                      color: '#0c4a6e'
+                    }}
+                  >
+                    {suggestion}
                   </PreMadeQuestionButton>
                 ))}
               </PreMadeQuestionsContainer>
@@ -1193,8 +1401,8 @@ const EnhancedAIChat = () => {
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileChange}
-                accept="image/*,.pdf,.doc,.docx,.txt"
-                aria-label="Upload file"
+                accept="image/*,.pdf,.doc,.docx,.txt,.xlsx,.xls"
+                aria-label="Upload file or document"
               />
             </StyledForm>
             
@@ -1227,6 +1435,76 @@ const EnhancedAIChat = () => {
               content={currentSidebarContent} 
               onQuestionSelect={handleSidebarQuestionSelect} 
             />
+          )}
+          
+          {/* Document Management Section */}
+          {documentStats && documentStats.totalDocuments > 0 && (
+            <div style={{ padding: '1rem', borderTop: '1px solid #e5e5e6' }}>
+              <h4 style={{ marginBottom: '1rem', fontSize: '1rem', fontWeight: '600' }}>
+                📚 Knowledge Base ({documentStats.totalDocuments} documents)
+              </h4>
+              <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                {documentStats.documents.map((doc, index) => (
+                  <div key={doc.id} style={{ 
+                    padding: '0.5rem', 
+                    marginBottom: '0.5rem', 
+                    backgroundColor: '#f8f9fa', 
+                    borderRadius: '0.25rem',
+                    border: '1px solid #e9ecef'
+                  }}>
+                    <div style={{ fontWeight: '500', fontSize: '0.875rem', marginBottom: '0.25rem' }}>
+                      {doc.name}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: '#6c757d' }}>
+                      {doc.type.toUpperCase()} • {doc.chunks} chunks • {doc.keywords} keywords
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: '#6c757d' }}>
+                      Processed: {new Date(doc.processedAt).toLocaleDateString()}
+                    </div>
+                    <button
+                      onClick={() => {
+                        removeDocument(doc.id);
+                        const updatedStats = getDocumentStats();
+                        setDocumentStats(updatedStats);
+                        setProcessedDocuments(updatedStats.documents);
+                      }}
+                      style={{
+                        marginTop: '0.25rem',
+                        padding: '0.25rem 0.5rem',
+                        fontSize: '0.75rem',
+                        backgroundColor: '#dc3545',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '0.25rem',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={() => {
+                  clearAllDocuments();
+                  setDocumentStats(null);
+                  setProcessedDocuments([]);
+                }}
+                style={{
+                  marginTop: '1rem',
+                  padding: '0.5rem 1rem',
+                  fontSize: '0.875rem',
+                  backgroundColor: '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '0.25rem',
+                  cursor: 'pointer',
+                  width: '100%'
+                }}
+              >
+                Clear All Documents
+              </button>
+            </div>
           )}
         </SidebarArea>
       </MainContent>
