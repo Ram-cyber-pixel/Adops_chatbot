@@ -20,23 +20,7 @@ const generalResponses = {
         "### Harshaavardhan's Contributions\n\n**Role:**\n- A key member of the **Ad Operations** team with full-stack development expertise, driving innovation and operational efficiency.\n\n**Major Projects:**\n\n1. **Stats Automation**\n   - Focused on frontend development, delivering intuitive and user-friendly interfaces for data visualization and reporting.\n\n2. **Complete Performance Stats Automation**\n   - Spearheaded the entire project, showcasing end-to-end development skills, including backend, frontend, and system integration.\n\n3. **AdOps Chatbot (Me)**\n   - Played a pivotal role in developing and implementing key features, enhancing automation and user engagement through AI-driven solutions.\n\n**Additional Highlights:**\n- Recognized for consistently delivering high-quality solutions under tight deadlines.\n- Actively contributed to team knowledge-sharing sessions and mentoring junior developers.\n- A proven track record of optimizing workflows, reducing manual efforts, and driving operational excellence.\n\nhttps://www.instagram.com/p/DB26ysryKkJ/?igsh=Z3p4dDhiMGFuNTFm.jpg",
     ],
     "images": "https://www.instagram.com/p/DB26ysryKkJ/?igsh=Z3p4dDhiMGFuNTFm.jpg"
-},"sups":{
-    "keywords":["sups", "best sups", "supervisor",],
-    "responses":["Guess What? We will never know!"]
-  },"pooja":{
-    "keywords":["pooja", "bookie", "nithiyamenon",],
-    "responses":["Pooja is bookie, nithiyamenon, ukeybi"]
-  },"kirthika":{
-    "keywords":["kirthika", "james", "kirthika j",],
-    "responses":["Kirthika is an adept Engineering Level 2 (ENG 2) professional, showcasing her skills and expertise in operations and growth within her field, while delivering innovative solutions on a low budget Jessi"]
-  },"sneha":{
-    "keywords":["sneha", "snake", "k sneha","kishore","paambu"],
-    "responses":["sneha is a sootai mandai and she loves kishore, knjam maanam ketavan"]
-  },"pradeep joel":{
-    "keywords":["pradeep", "joel", "physc","joker","tharkuri","red flag"],
-    "responses":["Pradeep is a red flag","pradeep is also know as manja pai", "pradeep"
-    ]
-  },
+},
   "farewell": {
     keywords: ["bye", "goodbye", "see you", "talk to you later", "farewell"],
     responses: [
