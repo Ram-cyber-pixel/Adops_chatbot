@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/Adops_chatbot/static/css/main.bcd61c59.css",
+    "main.js": "/Adops_chatbot/static/js/main.a7ab0f55.js",
+    "static/js/453.53f10d97.chunk.js": "/Adops_chatbot/static/js/453.53f10d97.chunk.js",
+    "index.html": "/Adops_chatbot/index.html",
+    "main.bcd61c59.css.map": "/Adops_chatbot/static/css/main.bcd61c59.css.map",
+    "main.a7ab0f55.js.map": "/Adops_chatbot/static/js/main.a7ab0f55.js.map",
+    "453.53f10d97.chunk.js.map": "/Adops_chatbot/static/js/453.53f10d97.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.bcd61c59.css",
+    "static/js/main.a7ab0f55.js"
+  ]
+}
